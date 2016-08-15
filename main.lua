@@ -1,4 +1,7 @@
 instead_version "1.8.0"
+-- open-close сделать стандартизированными
+
+
 
 require "framework"
 
@@ -15,36 +18,67 @@ boo = function (s)
 	p"Полка имеет кронштейны для крепления к {wall|стене}";
 end;
 
+
 shielf = cobj {
-	var = {
+	--var = {
 		Choices = {
 			["Ощупать"] = "Полка имеет кронштейны для крепления к {wall|стене}",
+			[Cclose] = "Я затворил полку :)",
 		},
-	},	
-	nam = "полка", nam1 = "полку",
+	--},	
+	nam = "полка", nam1 = "полку", nam2 = "полке", nam3 = "полкой",
 	dsc = function(s)
-		if CountItems(s) > 0 then
+		if CountCobj(s) > 0 then
 			p "На {wall|стене} висит {книжная полка}.";
-			PrintItems(s, "На полке");
+			DescribeContainer(s, true);
+			-- PrintItems(s, "На полке");
 		else
 			p "На {wall|стене} висит пустая {книжная полка}.";
 		end
 	end,
 	cdsc = function (s)
-		p "Небольшая видавшая виды книжная полка из дерева или ДСП.";
-		PrintItems(s, "На полке");
+		p "Небольшая видавшая виды книжная полка из дерева.";
+		DescribeContainer(s);		
+		-- PrintItems(s, "На полке");
 	end,
 	Uses = {
-		["book"] = {"Поставить на полку", function (o)
+		["book"] = {Cput, "Поставить на полку", function (o)	-- переопределение стандартного поведения контейнера
 			p "Вы поставили книгу на полку";
+			Take (book, "");
 			drop(book, o);
 			book.standing = true;
 		end },
 	},
 	
 	weight = 10,
-	obj = {"brick"},
-}
+	
+	Container = { 
+		
+		on_weight = 10,
+		in_weight = 5,
+		
+		_door = opened, -- "opened", "closed", "locked", false
+		dsc_opened = "Полка открыта.",
+		dsc_closed = "Полка закрыта.",
+		dsc_locked = "Заперто.",
+		--dsc_open = "Я открыл полку",
+		--dsc_close = "Я закрыл полку",
+	},
+	
+	
+};
+
+barrel = cobj{
+	
+	nam = "бочка", nam1 = "бочку", nam2 = "бочке", nam3 = "бочкой",
+	Inherit = shielf,
+	dsc = false,
+	cdsc = "";
+	Container = {
+		_door = opened,
+	},
+	standing = true,
+};
 
 
 book = cobj {
@@ -52,8 +86,8 @@ book = cobj {
     cdsc = "Небольшая рукописная книга в кожаном переплёте. На корешке вытеснено: 'INSTEAD'",
     cimg = "images.jpg";
     Choices = {
-		[Ctake] = function(s) p"Вы осторожно взяли книгу"; take(s) end, -- замещение глобального действия для этого конкретного объекта
-		[Cdrop] = function(s) p"Вы бережно положили книгу"; drop(s) end,-- ./.
+		[Ctake] = function(s) Take(s,"Вы осторожно взяли книгу") end, -- замещение глобального действия для этого конкретного объекта
+		[Cdrop] = function(s) p"Вы бережно положили книгу"; Drop(s) end,-- ./.
         ["Читать"] = "'INSTEAD. Сакральное зерцало знаний для желающих игрища учинять'. Далее идут пару сотен страниц трудночитаемой скорописи.",        
         ["Осмотреть"] = "Книга ручной работы. Похоже она очень старая. Обложка с тиснением потемнела и вытерлась, страницы пожелтели, чернила выцвели, но переплёт всё ещё довольно крепок.",
     },    
@@ -76,7 +110,7 @@ brick = cobj {
 
 scissors = cobj {
     nam = "ножницы", 
-    cdsc = "Обычные канцелярские ножницы с ручками из чёрного пластика.",
+    cdsc = "Обычные канцелярские ножницы с ручками из пластика.",
     pluralis = true;					-- этот объект всегда во множественном числе
 }
 
@@ -84,5 +118,5 @@ scissors = cobj {
 main = room {
     nam = "Тест",
     dsc = "Это, так сказать, комната",
-    obj = {shielf, Flo, scissors, book, brick, "wall" };
+    obj = {barrel, shielf, Flo, scissors, book, brick, "wall" };
 }

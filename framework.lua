@@ -1,4 +1,4 @@
---= PILOT Framework for INSTEAD (c) z-Hunter@tut.by, 2013 =--
+--= Context Framework v.0.1.1   (c) z-Hunter@tut.by , 2012-2016 =--
 
 instead_version "1.8.0"
 require "xact";
@@ -8,7 +8,16 @@ require "xact";
 	choice = function(s) Cmenu(s) end;	
 	using = function(s, w) Umenu(s, w) end;
 	Ctake = "Взять";
-	Cdrop = "Выбросить";	
+	Cdrop = "Выбросить";
+	Cput = "Поместить";
+	Cputin = "Поместить в";
+	Cputon = "Положить на";
+	Cputunder = "Положить под";
+	Copen = "Открыть";
+	Cclose = "Закрыть";
+	opened = "opened";
+	closed = "closed";
+	locked = "locked";
 -- };
 
 
@@ -23,10 +32,28 @@ end;
 function IsTable(s)   
   return type(s) == "table" ;
 end;   
-function nop()						-- No Operation
+function nop() end;						-- No Operation
+
+function IsPN(t)                    -- >true if =t is Positive Number or is false/nil
+	if not t then return true
+	elseif type(t)=="number" and t >= 0 then return true
+	else return false
+	end;
 end;
 
-function table.ifind(t, f) -- find key =f in array =t and return its index
+function IsArray (t)						---> true  if table =t is Array
+	if not IsTable then return false end;
+	local count = 0;
+	for k, _ in pairs(t) do						
+		if type(k)~="number" then return false else count = count +1 end;
+	end;
+	for i=1, count do
+		if not t[i] and type(t[i])~="nil" then return false end;
+	end;
+	return true;
+end;
+
+function table.ifind(t, f) -- INDEX find: search for key =f in array =t and return its index
   local v; local i;
   for i, v in ipairs(t) do
     if v == f then
@@ -36,47 +63,135 @@ function table.ifind(t, f) -- find key =f in array =t and return its index
   return nil
 end;
 
-function table.deepcopy(t)	--> recursively copies a table's contents, ensures that metatables are preserved (correctly clone a pure Lua object)
-	local k; local v;
-	if not IsTable(t) then return t end
-	local mt = getmetatable(t)
-	local res = {}
-	for k,v in pairs(t) do
-		if IsTable(v) then
-			v = table.deepcopy(v)
-		end
-		res[k] = v
-	end
-	setmetatable(res,mt)
-	return res
-end
+
+function table.deepcopy(o, seen)  --> recursively copies a table's contents, ensures that metatables are preserved
+  -- Handle non-tables and previously-seen tables. |SRC: https://gist.github.com/tylerneylon/81333721109155b2d244#file-copy-lua-L84
+  if not IsTable(o) then return o
+  elseif seen and seen[o] then return seen[o]
+  end;
+  -- New table; mark it as seen an copy recursively.
+  local s = seen or {};
+  s[o] = true;
+  local res = setmetatable({}, getmetatable(o));
+  local k, v;
+  for k, v in pairs(o) do res[table.deepcopy(k, s)] = table.deepcopy(v, s) end;
+  return res
+end;
+
+-->  
+function table.deepmerge(t1, t2, seen)		---> result of recursive merging t2 over t1. For Arrays doing concatenation (adding new indexes)
+											-- для МАССИВОВ отсутствует защита от бесконечной рекурсии!
+		local k, v, res;									
+			
+		if IsArray(t2) and IsArray(t1) then				    -- массивы - отдельный случай, Одинаковые индексы не замещаются а добавляются
+			res = table.deepcopy(t1)					-- временный буфер чтобы не испортить оригинал									
+			for k = 1, #t2 do
+				if IsTable(t2[k]) and IsTable(res[k]) then
+					res[k] = table.deepmerge(res[k], t2[k])										-- рекурсивно обходим их
+				else 
+					res[#res+1] = t2[k];
+				end;				
+			end;
+		elseif IsTable(t2) and IsTable(t1) then							-- если и там и там таблицы 
+			if seen and seen[t2] then return seen[t2] end;				
+			local s = seen or {};
+			s[t2] = true;
+			res = table.deepcopy(t1)					-- временный буфер чтобы не испортить оригинал									
+			for k,v in pairs(t2) do
+				if IsTable(v) and IsTable(res[k]) then
+					res[k] = table.deepmerge(res[k], t2[k], s)										-- рекурсивно обходим их
+				else 
+					res[k] = v
+				end;
+			end;
+		else 
+			res = t2 or t1														
+		end;
+		return res;
+	
+end;
 
 
+-- XACT section
 link = xact( "link", function(_, o)
 	o = stead.ref(o)
 	Proceed(o.act, o);
 end);
 
-cxact = xact( "cxact", function(_, f, o)	--> convert string to hyperlink for local context menu items		
+cxact = xact( "cxact", function(_, f, o, sup)	--> handler for local context menu items		
         o = stead.ref(o)
-        p(txtc(f.." "..o.nam1),"^^");
-        Proceed(o.Choices[f], o);
+		if sup ~= "true" then			-- механизм подавления вывода описания в o.Choices: ["Choice"] = { ... , suppress = true } 
+			pchoice("link", o.nam, stead.deref(o)); p ("-> ", f, "^^");
+			-- p(txtc( makexact("link", o.nam, stead.deref(o)) ).." -> "..f,"^^");	  -- если не подавлено то выводим описание		
+		end;
+		clear_usemode(true);						-- сбрасываем режим use
+		o.scene_use = true; o.menu_type = true;
+		Proceed(o.Choices[f], o);
 end);
-gcxact = xact( "gcxact", function(_, f, o)	-- ./. for global context menu items
+gcxact = xact( "gcxact", function(_, f, o, sup)	-- ./. for global context menu items
         o = stead.ref(o)
-        p(txtc(f.." "..o.nam1),"^^");
+		o.scene_use = false; o.menu_type = true;		-- выключаем режим use если он был
+		if sup ~= "true" then			-- suppress = true  
+			--p(txtc( makexact("link", o.nam, stead.deref(o)) ).." -> "..f,"^^");	  -- если не подавлено то выводим описание		
+		 pchoice("link", o.nam, stead.deref(o)); p ("-> ", f, "^^");	  -- если не подавлено то выводим описание		
+		end;
 		Proceed(game.Choices[f], o);
 end);
 ucxact = xact( "ucxact", function(_, o, w)	-- ./. for use-on menu
-        o = stead.ref(o)
+        o = stead.ref(o);
+		-- local wr = stead.ref(w);
+		-- wr.scene_use = false; wr.menu_type = true;		-- выключаем режим use если он был
         -- p(txtc(o.nam),": ", w,"^^");
 		Proceed(o.Uses[w][2], o);
 end);
+pcxact = xact( "pcxact", function(_, o, w, T)					-- в контейнер =o помещаем объект =w 
+		clear_usemode(true);						-- сбрасываем режим use
+		o = stead.ref(o);
+		w = stead.ref(w);
+		-- p (o.nam, "<", w.nam)
+		Put(o,w, T);
+end);
 
-function clone_constructor (s)
-    -- local ret = table.deepcopy(s);
-    -- set_namquantity(ret)
-    return table.deepcopy(s);
+p2cxact = xact( "p2cxact", function(_, o, w)					-- обработка заказного помещения в контейнер
+												-- ПРИМЕР: в cobj.Uses: ["book"] = {Cput, "Поставить на полку", function() ... end}
+		clear_usemode(true);						-- сбрасываем режим use
+		o = stead.ref(o);
+		Proceed(o.Uses[w][3], o);
+end);
+
+occxact = xact ("occxact", function(_, o)			-- обработка открытия/закрытия контейнера
+	clear_usemode(true);						-- сбрасываем режим use
+	return (container_door_sw(stead.ref(o)));	
+end);
+
+-- end of XACT section
+
+function container_door_sw(o)						-- открытие/закрытие контейнера (переключатель)
+	if o.Container._door == closed then
+		o.Container._door = "opened";
+		p ("Я открыл ", o.nam1);
+	elseif o.Container._door == "locked" then 
+		p(o.Container.dsc_locked);
+	else 
+		o.Container._door = "closed";
+		p("Я закрыл ", o.nam1);
+	end;
+end;
+
+
+function pchoice(x, txt, ...)					-- выводит пункт меню, вызывающий xact =x с текстом =txt и списком аргументов =... для xact
+	local ret = "{".. x.. "("; 
+	local f; for f=1, arg.n do
+		ret = ret .. tostring(arg[f])
+		if f < arg.n then ret = ret .. ","; end;
+	end;	
+	ret = ret .. ")|" .. txtnb(txt) .. "}" ;
+	p(ret, " | ");	
+end; 
+
+
+function clone_constructor (o)
+    return table.deepcopy(o);
 end;
 
 function clone(o)    
@@ -104,6 +219,16 @@ onload_handler = obj {
 };
 lifeon("onload_handler");
 
+function clear_usemode(f)				-- 	сбрасывет режим use всех объектов в сцене/инвентаре и выставляет menu_type =f	
+		local i; local s = here();		-- является частью механизма кот. обеспечивает вывод меню по первому а не второму клику на объект
+		for _, i in opairs(objs(s)) do			
+			i.scene_use = false; i.menu_type = f;
+		end;
+		for _, i in opairs(inv()) do			
+			i.scene_use = true; i.menu_type = f;
+		end;
+end;
+
 
 ---> Base Functions   (основные функции) ///////////////////////////////
 
@@ -123,55 +248,100 @@ function Proceed (e, o, w)					-- "Proceed" content of (e). If (e) is single arg
 	end;
 end;
 
+
 function Cmenu(s)					-- Choice Menu (которое появляется при выборе объекта)
-    local txt, fun, k, v, ok;
-    
+	local txt, fun, k, v, ok;
+    clear_usemode(false);
+	s.scene_use = true; s.menu_type = false;  -- устанавливаем режим use
+	
     if s._quantity == 1 then
-		pn(txtc(s.nam))								-- печатаем заголовок
+		pn( txtc(s.nam));								-- печатаем заголовок
 	elseif s._quantity > 1 then
+		-- pn(txtc( makexact("link", s.nam.."(".."шт.)", stead.deref(s)  ) ));
 		pn(txtc(s.nam.." ("..s._quantity.." шт.)"))
 	end;
     if s.cimg then pn(img("img/"..s.cimg));		-- картинку если есть
 	else pn();									-- или пустую строку вместо неё
 	end; 
-    Proceed(s.cdsc, s); p"^^";					-- краткое описание
-    
-	for txt, fun in pairs(s.Choices) do				-- перебираем локальные Choices               	
-		if txt == Ctake and have(s) then nop();			-- не выводим неактуальные взять/положить
+    Proceed(s.cdsc, s); p"^^";					-- краткое описание	
+	p"> ";	
+	
+	local function print_pure_choice(s, txt, v, xactnam)
+		local C = s.Container -- подавляем закрыть/открыть для не контрейнеров и неподходящих конфигураций дверцы 
+		if txt == Copen and (not C._enabled or C._door ~= "closed") then nop();						 					
+		elseif txt == Cclose and (not C._enabled or C._door ~= "opened") then nop();	
+		elseif txt == Ctake and have(s) then nop();					-- подавляем неактуальные взять/положить
 		elseif txt == Cdrop and not have(s) then nop(); --/
-		else 
-			if not game.Choices[txt] and table.ifind(s.ActiveChoices, txt) then 				-- подавляем локальные пункты совпадаюшие с глобальными
-				p(txtnb("> "),"{cxact(", txt, ",", stead.deref(s), "|", txt, "}  |  ");    
+		else 			
+				pchoice(xactnam, txt, txt, stead.deref(s));			-- выводим акутальные пункты меню
+				-- p(txtnb("> "), makexact(xactnam,txt,  txt, stead.deref(s)), " | ");    
+				-- p(txtnb("> "),"{xactnam(", txt, ",", stead.deref(s), ",", s.Choices[txt].suppress, ")|", txt, "}  |  ");    
+		end;
+	end;	
+
+	for txt, v in pairs(s.Choices) do				-- перебираем локальные Choices               						
+			if not game.Choices[txt] and table.ifind(s.ActiveChoices, txt) and v then -- 				
+							-- подавляем локальные пункты совпадаюшие с глобальными (выводятся ниже вместо глобальных) а также неактивные
+				print_pure_choice(s,txt,v, "cxact")
 			end;
-		end;				
-	end;
-    
-    for txt, fun in pairs(game.Choices) do					-- а теперь горбат... глобальные Choices               	
+    end;
+	 
+    for txt, v in pairs(game.Choices) do				-- а теперь горбат... глобальные Choices					              	
+		local C = s.Container
 		if s.Choices[txt] == false then nop()			-- подавляем те, которые в объекте переопределены как false
-		elseif txt == Ctake and have(s) then nop();			-- не выводим неактуальные взять/положить
-		elseif txt == Cdrop and not have(s) then nop();		--/
-		elseif not table.ifind(game.ActiveChoices, txt) then nop();
-		elseif s.Choices[txt] then 						-- выводим вместо одноименных глобальных те локальные что подавили ранее
-			p(txtnb("> "),"{cxact(", txt, ",", stead.deref(s), "|", txt, "}  |  ");
-		else
-			p(txtnb("> "),"{gcxact(", txt, ",", stead.deref(s), "|", txt, "}  |  ");			
+		elseif s.Choices[txt]  then 						-- выводим вместо одноименных глобальных те локальные что подавили ранее			
+			print_pure_choice(s,txt,v, "cxact")	 
+		-- elseif not table.ifind(game.ActiveChoices, txt) then nop();
+		else  							 
+			print_pure_choice(s,txt,v, "gcxact")			
 		end;
     end;
+	
+	if s.cscene_use or have(s) then
+		s.scene_use = true; s.menu_type = false;
+		pchoice(stead.deref(s),"Использовать с...");
+		-- p( "{", stead.deref(s), "|", txtnb("Использовать с..."), "}" );
+	end;
+	
 end;
 
 function Umenu(s, w)									-- Menu of Using (when s & w used together)
+	w.scene_use = false; w.menu_type = true;		-- выключаем режим use если он был
 	local count = 0;
+	local cput = false;
 	pn(txtc(w.nam.." и "..s.nam))	
 	for o, fun in pairs(s.Uses) do	
 		if stead.ref(o) == w then
-			p("^> {ucxact(", stead.deref(s), ",", stead.deref(w), "|", fun[1], "}");
-			count = count + 1; 			
+			count = count + 1;
+			if fun[1] == Cput then -- у контейнера есть кастомный обработчик замещающий сразу все типы помещения в него
+				cput = true;
+				pchoice ("p2cxact", fun[2], stead.deref(s), stead.deref(w))
+			else
+				pchoice ("ucxact", fun[1], stead.deref(s), stead.deref(w))
+				-- p("^> {ucxact(", stead.deref(s), ",", stead.deref(w), "|", fun[1], "}");				
+			end;	
 		end;		
 	end;
-	if count == 0 then
+	-- пункты помещения в контейнер
+	if s.Container:IsCapable() and not cput then
+		if s.Container.on_weight then
+			pchoice("pcxact","Положить на "..s.nam1, stead.deref(s), stead.deref(w),"on");
+		end;
+		if s.Container.in_weight and not s.Container._door == closed then 
+			pchoice("pcxact","Поместить в "..s.nam1, stead.deref(s), stead.deref(w),"in");
+		end;
+		if s.Container.under_weight then
+			pchoice("pcxact","Положить под "..s.nam1, stead.deref(s), stead.deref(w),"under");
+		end;
+		
+		-- pchoice("pcxact","Поместить в "..s.nam1, stead.deref(s), stead.deref(w))
+	elseif count == 0 then		
 		pn(); Proceed (game.nouse, s, w);
 	end;
+		
 end;
+
+
 
 function FloorHere()
 	local i, o;
@@ -184,12 +354,12 @@ function FloorHere()
 	return false;
 end;
 
-
-
 function AddObj (o, w, q)		----> добавляет =q объектов =o в =w
 	local i = nil;
 
-	if q <= 0 then
+	if not q then
+		q = 1
+	elseif q <= 0 then
 		error "AddObj(): arg#3 (quantity) is zero or negative.";
 	end;
 
@@ -226,7 +396,7 @@ function RemObj (o, w, q)		----> Убавляет =q объектов =o в =w
 end;
 
 function Take(o, takeok, notake1, notake2)				-- 
-	local k, v;
+	local v;
 	local count = 0;
 	
 	if not takeok then takeok = game.take end;
@@ -238,30 +408,49 @@ function Take(o, takeok, notake1, notake2)				--
 		Proceed(notake1, o);
 		return false;
 	end;
-	for k, v in opairs(objs(pl)) do			-- считаем вес переносимого		
+	for _, v in opairs(objs(pl)) do			-- считаем вес переносимого		
 		count = count + v.weight;		
 	end;
 	if count > pl.maxweight then
 		Proceed(notake2, o);
 		return false;
-	else
-		take(o, here());
-		o.taken = true;
+	else								-- //// ничто не мешает взять объект
+		
+		take(o, where(o));				-- берем оттуда, где это лежит (иначе в инвентаре возникнет дубль)
+		if o._in_container_slot then o._in_container_slot = false end; 
+		if o._dropped then o._dropped = false end;
 		Proceed(takeok, o);
 		o.dsc = nil;		-- после взятия не нужен dsc тк описание объекта будет генерироваться описателями 
 	end;	
 end;
 
+-- ..
+function Put (w, o, T, putok, noput1, noput2)
+	if not T then T = "on" end;
+	
+	local weight;	
+	if T == "in" then
+		weight = w.Container.in_weight;  
+	elseif T == "on" then
+		weight = w.Container.on_weight; 
+	elseif T == "under" then
+		weight = w.Container.under_weight; 
+	end;
+	
+	o._in_container_slot = T;
+	drop(o,w);
+	p "вы положили это"
+end;
+
 function Drop(o, dropok, nodrop)								--
-		local FH;
-		
-		if not dropok then dropok = game.drop end;
-		if not nodrop then nodrop = game.nodrop end;
-		
-		FH = FloorHere()
+		local FH = FloorHere();		
+		local dropok = o.dropok or game.drop;
+		local nodrop = o.nodrop or game.nodrop;
+			
 		if FH then	
 			drop( o, here() );
-			o.taken = false;
+			-- if not o.dropped then stead.add_var(o, dropped) end;
+			o._dropped = true;
 			Proceed(dropok, o, FH);			
 		else
 			Proceed (nodrop, o);
@@ -271,15 +460,30 @@ function Drop(o, dropok, nodrop)								--
 
 end;
 
-function PrintItems (s, introtxt)			-- Non-recursive search anf describe all objects in (s) with (introrext) if any objects here
+function TransferDropped(f, t)				-- Переносит (копирует) выброшенные игроком объекты из f в t		
+		for _, i in opairs(objs(f)) do			
+			if i._dropped then place(i, t) end;
+		end;
+end;
+
+
+function PrintItems (s, introtxt, T)		-- Non-recursive search and describe all objects in (s) with (introtxt) if any objects here
+											-- If optional (T) specified -- proceed only objects with: obj._in_container_slot = T  
 		local o_nam={};						-- for "laying" objects
 		local o_ref={};	
 		local o_nam1={};					-- for "standing" objects
 		local o_ref1={};	
 		local i, o;
-		local plu = false; local plu1 = false; 		
+		local plu = false; local plu1 = false;
+		local ics;						-- incontainer slot status 
+		 				
 		for i, o in opairs(objs(s)) do		-- перебираем объекты внутри s
-			if not o.dsc and o.nam1 then	-- объекты с dsc сами себя описывают, а объекты без nam1 это не cobj, значит нам не интересны
+			if T then
+				if T == o._in_container_slot then ics = true else ics = false end; 
+				if T == "on" and not o._in_container_slot then ics = true end;
+			else ics = true
+			end;  -- если задан параметр фильтрования контейнера готовим булевый ics
+			if not o.dsc and o.nam1 and ics then	-- объекты с dsc сами себя описывают, а объекты без nam1 это не cobj
 				set_dispquantity(o)			-- устанавливаем корректное число - мн. или ед.
 				if o.standing then 			-- далее сортируем объекты на лежащие и стоящие :)
 					table.insert(o_nam1, o.disp);
@@ -333,11 +537,33 @@ function PrintItems (s, introtxt)			-- Non-recursive search anf describe all obj
 		end;
 end;
 
-function CountItems(s)					-- Non-recursive counts object in some other object
+
+
+function DescribeContainer(s, vis)		-- Выводит описание содержимого контейнера с учетом слотов "в/на/под" и закрытой/открытой дверцы
+											-- vis (optional) if ==true: proceed only "on" (always) and "in" (if not closed) objs in container
+	local closed = s.Container._door;
+	
+	if not vis then 
+		if closed then
+			p (s.Container.dsc_closed);
+		elseif s.Container._door and s.Container._door == "opened" then
+			p (s.Container.dsc_opened);
+		end;
+	end;
+	
+	PrintItems(s, "На "..s.nam2, "on");	
+	if not closed then 
+		PrintItems(s, "В "..s.nam2, "in");
+	end;
+	if not vis then
+		PrintItems(s, "Под "..s.nam3, "under")
+	end;
+end;
+
+function CountCobj(s)					-- Non-recursive counts cobj in some other object
 	local i, o;
 	local count = 0
 	for i, o in opairs(objs(s)) do
-		-- if IsFunction(o) then nop()
 		if not o.dsc and o.nam1 then				-- объекты с dsc нам не интересны так как сами себя описывают
 			count = count +1;
 		end;		
@@ -348,6 +574,7 @@ function CountItems(s)					-- Non-recursive counts object in some other object
 	return count;
 end;
 
+
 function AddChoice(s, c)
 	table.insert (s.ActiveChoices, c);
 end;
@@ -356,19 +583,17 @@ function RemChoice(s, c)
 	table.remove (s.ActiveChoices, table.ifind(s.ActiveChoices, c));
 end;
 
-function cobj(v)							--- extended standart obj	
+
+function cobj(v)							---  ||||||||||||||||||| extended standart obj |||| |     |           |	
 	local i; 
-	obj(v);
+		
+	if v.Inherit then						--- этот объект наследует параметры другого объекта =Inherit		
+		v = table.deepmerge(v.Inherit, v);   		
+	end;
+	 		
 	if not v.Choices then
 		v.Choices = {}; v.ActiveChoices = {};
 	end;
-	if not v.Uses then v.Uses = {} end;
-	if not v.act then v.act = choice end;
-	if not v.inv then v.inv = choice end;
-	if not v.used then v.used = using end;
-	if not v.nam1 then v.nam1 = v.nam end;  -- nam1 = nam в винительном падеже (accusative, кого что?)
-	if not v.nam2 then v.nam2 = v.nam end;  -- nam2 = nam в множ. числе (nam in pluralis)
-	if not v.weight then v.weight = 0 end;
 	if not v.ActiveChoices then
 		v.ActiveChoices = {};
 		for i, _ in pairs(v.Choices) do
@@ -380,10 +605,68 @@ function cobj(v)							--- extended standart obj
 			RemChoice(v, i)
 		end;
 	end;
-	if not v._quantity then v._quantity = 1 end; -- 
-	-- if not v.taken then v.taken = false; end; -- 
-	v.id = stead.deref(v);
-	return v;
+	
+	v.cdsc = v.cdsc or "";
+	-- if not v.cdsc then error ("cobj "..v.nam..": none of .cdsc and .dsc is defined.") end;
+	v.Uses = v.Uses or {};
+	v.act = v.act or choice
+	v.inv = v.inv or choice;
+	v.used = v.used or using;
+	v.nam1 = v.nam1 or v.nam;				-- nam1 = nam в винительном падеже (accusative, кого что?)   
+	v.nam2 =	 v.nam2 or v.nam;			  	-- nam2 = nam в множ. числе (nam in pluralis)
+	v.weight = v.weight or 0;
+	
+	v._quantity = v._quantity or 1; --  
+	-- v.id = stead.deref(v);
+	
+	if v.scene_use then						-- cobj используются через меню
+		stead.add_var(v, {cscene_use = true});
+		v.scene_use = false;
+	end;
+	 
+	
+	--- начало секции инициализации Container	
+	if v.Container then
+		v.Container._enabled = true;
+	else 
+		v.Container = {};
+	end;
+	local C = v.Container;
+			
+	C.parent = v;
+	if C._door and (C._door~=closed and C._door~=opened and C._door~=locked) then
+		error ("cobj "..v.nam..": Container._door must be = opened, closed or locked (now= "..C._door..")");
+	end;
+			
+	if  IsPN(C.in_weight) and IsPN(C.on_weight) and IsPN(C.under_weight) then
+			nop();
+	else
+			error ("cobj "..v.nam..": Container.*_weight values must be a positive numbers.");
+	end;
+	
+	C.IsCapable = function(s)     -- возвращает True если этот объект может служить контейнером
+		if s._enabled and (s.in_weight > 0 or s.on_weight > 0 or s.under_weight > 0) then return true;
+		else return false;
+		end;
+	end;
+	
+	C.SlotBurden = function(s, slot)    -- ex: slot_weight = somecobj.Container:SlotBurden("in")
+		local i;
+		local c = 0;
+		local X = s.parent
+		p ("*"..X.nam);
+		for _, i in opairs(objs( X )) do			
+			p (i.nam)
+			if i._in_container_slot == slot  then c = c + i.weight end;		
+		end;
+		return c
+	end;
+	v.var = v.var or {};
+	v.var.Container = C;
+	--C = nil;
+															--- конец секции Container
+	
+	return obj(v);
 end;
 
 function cmenu(v)							--- extended standart menu
@@ -408,24 +691,53 @@ Flo = cobj {									--- object-descriptor for "floor"
 	floor = true,								-- Drop function look for this. If here no objects with floor, drop is impossible
 };
 
+Gro = cobj {									--- "ground"
+	nam = "земля", nam1 = "землю",								-- объект-описатель для лежащих на земле объектов
+	dsc = function(s)
+		PrintItems (here(), "На земле");
+	end,
+	floor = true,								-- Drop function look for this. If here no objects with floor, drop is impossible
+};
+
+Her = cobj {									--- "here"
+	nam = "здесь", nam1 = "сюда",								-- объект-описатель для лежащих "здесь" объектов
+	dsc = function(s)
+		PrintItems (here(), "Здесь");
+	end,
+	floor = true,								-- Drop function look for this. If here no objects with floor, drop is impossible
+};
+
 game.Choices = {										-- global cmenu items, выводятся у всех объектов (если локально не задизаблены в них)
 
 	["Осмотреть"] = function(s) Proceed ({
 			"Ничего особенного", "Тут особо нечего осматривать",
 			"Просто "..s.nam..".",
 			"Я осмотрел "..s.nam1.." но не нашёл ничего интересного.",
-	}) end, 
+	})end, 
 
  
 	["Ощупать"] = function(s) Proceed ({
 			"Я потрогал "..s.nam1..". Вроде бы ничего особенного.",
-			"Гм... "..s.nam1.."даёт довольно скудные тактильные ощущения.",
 			"Я ощупал "..s.nam1.." но ничего интересного не обнаружил.",
-			"Довольно простая фактура. ", "На ощупь "..s.nam.." производит ощущение чего-то однородного.",
-			"Довольно гладкая поверхность.", "По форме похоже на "..s.nam1..".",
+			"Довольно простая фактура. ",
+			"По форме похоже на "..s.nam1..".",
 			"Мои пальцы скользят по поверхности, но ничего не обнаруживают.",
 			"На ощупь "..s.nam.." как "..s.nam..", ничего примечательного.",
-	}) end, 
+			function(o)
+				if o.Container.in_weight then
+						p("При постукивании пальцами по поверхности ",o.nam);
+						p" иногда звучит как пустотелый объект.";
+					else
+						p("На ощупь "..o.nam.." производит ощущение чего-то однородного.");
+				end;
+			end,
+			function(o)
+				if o.Container.on_weight then
+					p("Верхняя часть довольно плоская.");
+				else p "Довольно гладкая поверхность.";
+				end;
+			end,
+	},s) end, 
 
 	[Ctake] = function(s)
 		Take(s, game.take);
@@ -435,11 +747,19 @@ game.Choices = {										-- global cmenu items, выводятся у всех 
 		Drop (s, game.drop);
 	end, 
 	
+	[Copen] = function(s)
+		-- p (S.nam)
+		p (s.Container:SlotBurden("on"));
+	end,
+	
+	[Cclose] = function(s)
+	end,
+	
 };
 
-stead.add_var(game, {
-	ActiveChoices = {Ctake, Cdrop, "Ощупать"};
-})
+--[[ stead.add_var(game, {
+	ActiveChoices = {Ctake, Cdrop, "Ощупать", "Осмотреть"};
+})]]
 
 
 pl.maxweight = 10;
@@ -454,7 +774,13 @@ game.notake1 = {
 };												
 
 -- o.weight + invetory weight > pl.maxweight
-game.notake2 = "Мне некуда это взять, руки заняты. ";												
+game.notake2 = {
+	"Мне некуда это взять.",
+	"Я и так несу слишком много.",
+	"Чтобы взять это надо сначала что-то выбросить.",
+	"Мне столько не унести.",
+	"Не могу взять. Руки заняты."
+	};												
 
 -- Take successfully
 game.take = {
@@ -492,29 +818,39 @@ game.drop = {
 
 -- umenu is empty
 game.nouse = {
-	"Не знаю как это можно скомбинировать.", "Ума не приложу что с этим делать. ", "Нет вариантов действий. ", 
-	"Я пока не вижу вариантов использования этого.", "Никаких идей.", "Гм...",
+	"Не знаю как скомбинировать.", "Многообещающее сочетание.",
+	"Не могу придумать как это использовать.", "Не знаю как.",
+	"Не вижу вариантов использования.", "Никаких идей.", "Ума не приложу как они связаны.",
 	"Совместно использовать эти объекты в таком порядке нельзя.", "Какими-то глупостями я занимаюсь.",
-	"Cтранные мысли приходят в голову.", "Так можно сойти с ума...", "Ничего сделать с этим нельзя. ",
-	"Это какое-то издевательство над здравым смыслом.", "Не могу придумать что с этим делать.",
-	function (s, w) 
+	"Cтранные мысли приходят в голову.", "Так можно сойти с ума...", "Не вижу в этом смысла. ",
+	"Это издевательство над здравым смыслом.", "Отказываюсь думать про это.",
+	"Не получится.", "Страшно...", "Нет вариантов использования.", "Нет идей по поводу применения всего этого.",
+	"Не выйдет.", "Ничего придумать тут не могу.", "Это не сработает.", "Так нельзя.", "И что с этим можно сделать?",
+	"Не комбинируется.", "Если бы это было так просто...", "Не думаю, что стоит пытаться их совместить.", "Да вы шутите?",
+	function (s, w)
+		Proceed {"Я не знаю как применить ".. w.nam1 .. " на ".. s.nam1..".",
+				"К сожалению, " .. w.nam1 .. " и ".. s.nam1.." скомбинировать невозможно.",
+		};
+	end,
+	function (s, w)	
 		p ("Гм... ", w.nam1," в ", s.nam1, "? ");
 		Proceed {
-			"Абсурд!", "Зачем?", "Как?", "Сам удивляюсь своей фантазии.", ""
+			"Не думаю что такое возможно.", "Оригинально.", "Не стоит.", "", "", "",
+			"Хорошая идея для авангардного стихотворения.", "Попахивает какими-то извращениями.",
 		}
 	end,
 };
 
 -- No floor surface to drop
 game.nodrop = {
-	"Некуда положить",
-	"Тут нет ни пола, ни земли, чтобы поставить на них. Надо найти подходящую поверхность.",
-	function (s) p("На что бы тут положить ", s.nam1,"? ") end,
+	"В таком месте лучше ничего не выбрасывать.",
+	"Сперва надо найти куда положить это.",
+	"Надо отыскать подходящую поверхность.",
 	"Если я выпущу здесь предмет из рук, он упадёт и потеряется.",
 	function (s)
-		p("Положить ", s.nam1," в воздух?")
+		p("Положить ", s.nam1," в воздух? ")
 		Proceed({
-			"Ха-ха!", "Нужно что-то более твёрдое.", "Не выйдет.",
+			"Ну уж нет.", "Нужно что-то более твёрдое.", "Не выйдет.",
 		});
 	end,
 }
