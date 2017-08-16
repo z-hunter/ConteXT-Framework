@@ -73,7 +73,7 @@ barrel = cobj{
 	nam = "бочка", nam1 = "бочку", nam2 = "бочке", nam3 = "бочкой",
 	Inherit = shielf,
 	dsc = false,
-	cdsc = "";
+	cdsc = "",
 	Container = {
 		_door = opened,
 	},
